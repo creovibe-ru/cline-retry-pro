@@ -19,7 +19,7 @@
 .PARAMETER Uninstall
     Убрать задачу планировщика и откатить все изменения.
 .EXAMPLE
-    irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1 | iex
+    iex ((irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1).Trim([char]0xFEFF))
 #>
 
 [CmdletBinding()]

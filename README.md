@@ -11,7 +11,7 @@ Cline (`saoudrizwan.claude-dev`) останавливает задачу и по
 Откройте PowerShell (**не** от администратора) и выполните:
 
 ```powershell
-irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1 | iex
+iex ((irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1).Trim([char]0xFEFF))
 ```
 
 Скрипт сам найдёт Cline (VS Code, Insiders, Cursor, Windsurf), скачает два
@@ -21,9 +21,14 @@ irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.p
 
 Всё. Больше ничего настраивать не нужно.
 
-> Если PowerShell ругается на политику выполнения, используйте:
+> **Почему `.Trim([char]0xFEFF)`?** Файл сохранён в UTF-8 с BOM, иначе PowerShell 5.1
+> показывал бы русский текст кракозябрами. При `iex` этот невидимый символ в начале
+> строки ломает разбор скрипта (`Непредвиденный атрибут "CmdletBinding"`), поэтому
+> его нужно отрезать — ровно это и делает `.Trim(...)`.
+>
+> **Альтернатива без `iex`** (обходит и политику выполнения, если она запрещает всё):
 > ```powershell
-> powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1 | iex"
+> $f="$env:TEMP\cline-retry-pro.ps1"; irm https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1 -OutFile $f; powershell -NoProfile -ExecutionPolicy Bypass -File $f
 > ```
 
 ---
@@ -83,9 +88,10 @@ Cline решает «повторять или нет» по HTTP-статусу
 
 ```powershell
 $u='https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1'
-& ([scriptblock]::Create((irm $u))) -Mode Verify
-& ([scriptblock]::Create((irm $u))) -Mode Revert
-& ([scriptblock]::Create((irm $u))) -Uninstall
+$s=[scriptblock]::Create((irm $u).Trim([char]0xFEFF))
+& $s -Mode Verify
+& $s -Mode Revert
+& $s -Uninstall
 ```
 
 Типичный вывод `-Mode Verify`:
@@ -114,7 +120,7 @@ $u='https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.p
 
 ```powershell
 $u='https://raw.githubusercontent.com/creovibe-ru/cline-retry-pro/main/install.ps1'
-& ([scriptblock]::Create((irm $u))) -InstallTask
+& ([scriptblock]::Create((irm $u).Trim([char]0xFEFF))) -InstallTask
 ```
 
 Удалить задачу: `-Uninstall`.
