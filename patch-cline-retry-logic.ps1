@@ -143,14 +143,73 @@ function Get-LogicEdits {
     return $edits
 }
 
-function Get-LogicState {
-    param([string]$Text)
+function Get-BackupText {
+    param($Target)
 
-    $kinds = @(Get-LogicEdits -Text $Text | ForEach-Object { $_.Kind })
+    if (-not (Test-Path -LiteralPath $Target.Backup)) { return '' }
+    try { return [System.IO.File]::ReadAllText($Target.Backup) } catch { return '' }
+}
+
+function Get-LogicState {
+    param([string]$Text, [string]$BackupText)
+
+    $pending = @(Get-LogicEdits -Text $Text | ForEach-Object { $_.Kind })
+
+    $cl = 'n/a'
+    $sg = 'n/a'
+    $cg = 'n/a'
+
+    if ($pending -contains 'classifier') { $cl = 'pending' }
+    if ($pending -contains 'streamGate') { $sg = 'pending' }
+    if ($pending -contains 'contentGuard') { $cg = 'pending' }
+
+    if ($BackupText) {
+        # Признак применён, если в бэкапе он был, а в текущем файле его уже нет.
+        $before = @(Get-LogicEdits -Text $BackupText | ForEach-Object { $_.Kind })
+        if (($before -contains 'classifier') -and ($pending -notcontains 'classifier')) { $cl = 'applied' }
+        if (($before -contains 'streamGate') -and ($pending -notcontains 'streamGate')) { $sg = 'applied' }
+        if (($before -contains 'contentGuard') -and ($pending -notcontains 'contentGuard')) { $cg = 'applied' }
+    }
+    elseif ($Text.IndexOf($NewClassifier, [StringComparison]::Ordinal) -ge 0) {
+        $cl = 'applied'
+    }
+
+    # Без бэкапа о двух признаках судить не по чему: нативный код Cline сам содержит
+    # ".type==="tool-call"" и "stream_callback", поэтому угадывать нельзя.
+    if (-not $BackupText) {
+        if ($sg -eq 'n/a') { $sg = 'unknown' }
+        if ($cg -eq 'n/a') { $cg = 'unknown' }
+    }
+
+    $all = @($cl, $sg, $cg)
+
     return [pscustomobject]@{
-        Classifier = ($Text.IndexOf('insufficient capacity', [StringComparison]::Ordinal) -ge 0)
-        StreamGate = ($kinds -notcontains 'streamGate')
-        Content    = ($kinds -notcontains 'contentGuard')
+        Classifier = $cl
+        StreamGate = $sg
+        Content    = $cg
+        Applicable = (($all -contains 'pending') -or ($all -contains 'applied'))
+        Applied    = ($all -contains 'applied')
+    }
+}
+
+function Format-State {
+    param([string]$State)
+
+    switch ($State) {
+        'applied' { return @('применён', 'Green') }
+        'pending' { return @('не применён', 'Yellow') }
+        'unknown' { return @('не определить без бэкапа', 'DarkGray') }
+        default { return @('нет в этом файле', 'DarkGray') }
+    }
+}
+
+function Format-State {
+    param([string]$State)
+
+    switch ($State) {
+        'applied' { return @('применён', 'Green') }
+        'pending' { return @('не применён', 'Yellow') }
+        default { return @('нет в этом файле', 'DarkGray') }
     }
 }
 
@@ -180,7 +239,9 @@ function Get-LogicTargets {
 
     foreach ($file in $files) {
         $text = [System.IO.File]::ReadAllText($file.FullName)
-        if ($text.IndexOf('provider returned error', [StringComparison]::Ordinal) -lt 0 -and $text.IndexOf('insufficient capacity', [StringComparison]::Ordinal) -lt 0 -and $text.IndexOf('.type!=="reasoning"', [StringComparison]::Ordinal) -lt 0) { continue }
+        if ($text.IndexOf('provider returned error', [StringComparison]::Ordinal) -lt 0 -and
+            $text.IndexOf('insufficient capacity', [StringComparison]::Ordinal) -lt 0 -and
+            $text.IndexOf('.type!=="reasoning"', [StringComparison]::Ordinal) -lt 0) { continue }
 
         $result += [pscustomobject]@{
             Path     = $file.FullName
@@ -205,24 +266,37 @@ switch ($Mode) {
 
     'Verify' {
         foreach ($t in $targets) {
-            $st = Get-LogicState -Text $t.Text
-            $a = 'исходный'; if ($st.Classifier) { $a = 'расширен' }
-            $b = 'запрещён'; if ($st.StreamGate) { $b = 'разрешён' }
-            $c = 'блокирует'; if ($st.Content) { $c = 'не мешает' }
+            $st = Get-LogicState -Text $t.Text -BackupText (Get-BackupText $t)
+            $a = Format-State $st.Classifier
+            $b = Format-State $st.StreamGate
+            $c = Format-State $st.Content
             Write-Result ('  файл: ' + $t.Relative) 'White'
-            Write-Result ('    классификатор временных ошибок: ' + $a) $(if ($st.Classifier) { 'Green' } else { 'Yellow' })
-            Write-Result ('    повтор после ошибки в стриме: ' + $b) $(if ($st.StreamGate) { 'Green' } else { 'Yellow' })
-            Write-Result ('    частичный ответ и повтор: ' + $c) $(if ($st.Content) { 'Green' } else { 'Yellow' })
+            Write-Result ('    классификатор временных ошибок: ' + $a[0]) $a[1]
+            Write-Result ('    повтор после ошибки в стриме: ' + $b[0]) $b[1]
+            Write-Result ('    частичный ответ и повтор: ' + $c[0]) $c[1]
         }
     }
 
     'Revert' {
         foreach ($t in $targets) {
-            if (-not (Test-Path -LiteralPath $t.Backup)) {
-                Write-Result ('  ' + $t.Relative + ': бэкапа нет, пропуск') 'Yellow'
+            $backupText = Get-BackupText $t
+            $st = Get-LogicState -Text $t.Text -BackupText $backupText
+            if (-not $backupText) {
+                if ($st.Applied) {
+                    Write-Result ('  ' + $t.Relative + ': файл изменён, но бэкапа нет - вернуть оригинал нечем') 'Yellow'
+                }
+                else {
+                    Write-Result ('  ' + $t.Relative + ': бэкапа нет, пропуск') 'DarkGray'
+                }
                 continue
             }
             Copy-Item -LiteralPath $t.Backup -Destination $t.Path -Force
+            $restored = [System.IO.File]::ReadAllText($t.Path)
+            if ($restored.IndexOf($NewClassifier, [StringComparison]::Ordinal) -ge 0) {
+                Write-Result ('  ' + $t.Relative + ': бэкап снят с уже пропатченного файла - откат неполный') 'Yellow'
+                Write-Result '    переустановите расширение Cline и запустите установщик заново' 'Yellow'
+                continue
+            }
             Remove-Item -LiteralPath $t.Backup -Force
             Write-Result ('  ' + $t.Relative + ': восстановлен оригинал') 'Green'
         }
@@ -234,7 +308,10 @@ switch ($Mode) {
         foreach ($t in $targets) {
             $edits = @(Get-LogicEdits -Text $t.Text)
             if ($edits.Count -eq 0) {
-                if (Test-Path -LiteralPath $t.Backup) {
+                if (-not (Get-LogicState -Text $t.Text -BackupText (Get-BackupText $t)).Applicable) {
+                    Write-Result ('  ' + $t.Relative + ': шаблоны патча не найдены, пропуск') 'DarkGray'
+                }
+                elseif (Test-Path -LiteralPath $t.Backup) {
                     Write-Result ('  ' + $t.Relative + ': уже пропатчен, пропуск') 'DarkGray'
                 }
                 else {
@@ -250,7 +327,6 @@ switch ($Mode) {
             Save-TextFile -Path $t.Path -Text $newText
             $checkText = [System.IO.File]::ReadAllText($t.Path)
             $left = @(Get-LogicEdits -Text $checkText)
-            $st = Get-LogicState -Text $checkText
             $ok = ($left.Count -eq 0)
             if (-not $ok) {
                 Copy-Item -LiteralPath $t.Backup -Destination $t.Path -Force
@@ -262,7 +338,7 @@ switch ($Mode) {
         }
 
         if ($changed -eq 0) {
-            Write-Result 'Все файлы уже пропатчены - изменений не требуется.' 'Green'
+            Write-Result 'Изменений не требуется: всё уже пропатчено либо шаблоны не найдены.' 'Green'
         }
         else {
             Write-Result ('Пропатчено файлов: ' + $changed) 'Green'

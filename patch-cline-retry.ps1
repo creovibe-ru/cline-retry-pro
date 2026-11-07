@@ -416,8 +416,11 @@ try {
         'Verify' {
             foreach ($target in $targets) {
                 $patched = Test-IsPatched -Info $target.Info -Retries $MaxRetries -BaseMs $BaseDelayMs -CapMs $MaxDelayMs
-                $backupText = if (Test-Path -LiteralPath $target.Backup) { 'бэкап есть' } else { 'бэкапа нет' }
-                $stateText = if ($patched) { 'ПАТЧ ПРИМЕНЁН' } else { 'оригинал / другие значения' }
+                $hasBackup = Test-Path -LiteralPath $target.Backup
+                $backupText = if ($hasBackup) { 'бэкап есть' } else { 'бэкапа нет' }
+                $stateText = if (-not $patched) { 'оригинал / другие значения' }
+                             elseif ($hasBackup) { 'ПАТЧ ПРИМЕНЁН' }
+                             else { 'значения уже целевые, патч не требуется' }
                 Write-TargetReport -Target $target
                 Write-Result ("    состояние: " + $stateText + ", " + $backupText) $(if ($patched) { 'Green' } else { 'Yellow' })
             }
@@ -425,11 +428,23 @@ try {
 
         'Revert' {
             foreach ($target in $targets) {
+                $isPatched = Test-IsPatched -Info $target.Info -Retries $MaxRetries -BaseMs $BaseDelayMs -CapMs $MaxDelayMs
                 if (-not (Test-Path -LiteralPath $target.Backup)) {
-                    Write-Result ("  " + $target.Relative + ": бэкапа нет, пропуск") 'Yellow'
+                    if ($isPatched) {
+                        Write-Result ("  " + $target.Relative + ": файл изменён, но бэкапа нет - вернуть оригинал нечем") 'Yellow'
+                    }
+                    else {
+                        Write-Result ("  " + $target.Relative + ": бэкапа нет, пропуск") 'DarkGray'
+                    }
                     continue
                 }
                 Copy-Item -LiteralPath $target.Backup -Destination $target.Path -Force
+                $restored = Get-RetryConstants -Text ([System.IO.File]::ReadAllText($target.Path))
+                if (($null -ne $restored) -and (Test-IsPatched -Info $restored -Retries $MaxRetries -BaseMs $BaseDelayMs -CapMs $MaxDelayMs)) {
+                    Write-Result ("  " + $target.Relative + ": бэкап снят с уже пропатченного файла - откат неполный") 'Yellow'
+                    Write-Result '    переустановите расширение Cline и запустите установщик заново' 'Yellow'
+                    continue
+                }
                 Remove-Item -LiteralPath $target.Backup -Force
                 Write-Result ("  " + $target.Relative + ": восстановлен оригинал") 'Green'
             }
@@ -444,8 +459,7 @@ try {
                         Write-Result ("  " + $target.Relative + ": уже пропатчен, пропуск") 'DarkGray'
                     }
                     else {
-                        Write-Result ("  " + $target.Relative + ": уже пропатчен, но бэкапа нет - откат невозможен") 'Yellow'
-                        Write-Result '    для чистого отката переустановите расширение Cline и запустите установщик заново' 'Yellow'
+                        Write-Result ("  " + $target.Relative + ": значения уже целевые, менять нечего") 'DarkGray'
                     }
                     continue
                 }

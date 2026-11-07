@@ -122,7 +122,12 @@ if ($roots.Count -eq 0) {
 foreach ($root in $roots) {
     Write-Step ''
     Write-Step ('== ' + $root) 'White'
-    foreach ($name in $ScriptNames) {
+    # Патчеры правят одни и те же бандлы, поэтому откат идёт в обратном порядке:
+    # бэкап логики снят уже после таймингового патча, и вернуть его первым значит
+    # оставить тайминговый патч в файле.
+    $order = $ScriptNames
+    if ($Mode -eq 'Revert') { $order = @($ScriptNames[($ScriptNames.Count - 1)..0]) }
+    foreach ($name in $order) {
         $path = Join-Path $scriptsDir $name
         if (-not (Test-Path -LiteralPath $path)) { continue }
         Invoke-PatchScript -ScriptPath $path -Root $root -Mode $Mode
@@ -133,14 +138,17 @@ if ($InstallTask -and $Mode -ne 'Revert') {
     $self = $PSCommandPath
     if (-not $self) { $self = Join-Path $scriptsDir 'install.ps1' }
     if (-not (Test-Path -LiteralPath $self)) {
-    try { Invoke-WebRequest -UseBasicParsing -Uri ($Raw + '/install.ps1') -OutFile $self } catch { }
-}
-if (Test-Path -LiteralPath $self) {
+        try { Invoke-WebRequest -UseBasicParsing -Uri ($Raw + '/install.ps1') -OutFile $self } catch { }
+    }
+    if (Test-Path -LiteralPath $self) {
         $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Mode Apply' -f $self)
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
         $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
         Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description 'Переприменяет патч Cline Retry Pro после обновлений Cline' -Force | Out-Null
         Write-Step '  задача переприменения установлена' 'Green'
+    }
+    else {
+        Write-Step '  не удалось сохранить install.ps1 - задача переприменения не установлена' 'Yellow'
     }
 }
 
