@@ -1,0 +1,5 @@
+# Скрипты распространяются через raw.githubusercontent.com — байты должны
+# совпадать с локальными (BOM + CRLF важны для PowerShell 5.1 и кириллицы).
+*.ps1 -text
+*.md text=auto
+*.txt text=auto
