@@ -440,7 +440,13 @@ try {
             $changed = 0
             foreach ($target in $targets) {
                 if (Test-IsPatched -Info $target.Info -Retries $MaxRetries -BaseMs $BaseDelayMs -CapMs $MaxDelayMs) {
-                    Write-Result ("  " + $target.Relative + ": уже пропатчен, пропуск") 'DarkGray'
+                    if (Test-Path -LiteralPath $target.Backup) {
+                        Write-Result ("  " + $target.Relative + ": уже пропатчен, пропуск") 'DarkGray'
+                    }
+                    else {
+                        Write-Result ("  " + $target.Relative + ": уже пропатчен, но бэкапа нет - откат невозможен") 'Yellow'
+                        Write-Result '    для чистого отката переустановите расширение Cline и запустите установщик заново' 'Yellow'
+                    }
                     continue
                 }
 

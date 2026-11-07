@@ -234,7 +234,13 @@ switch ($Mode) {
         foreach ($t in $targets) {
             $edits = @(Get-LogicEdits -Text $t.Text)
             if ($edits.Count -eq 0) {
-                Write-Result ('  ' + $t.Relative + ': уже пропатчен, пропуск') 'DarkGray'
+                if (Test-Path -LiteralPath $t.Backup) {
+                    Write-Result ('  ' + $t.Relative + ': уже пропатчен, пропуск') 'DarkGray'
+                }
+                else {
+                    Write-Result ('  ' + $t.Relative + ': уже пропатчен, но бэкапа нет - откат невозможен') 'Yellow'
+                    Write-Result '    для чистого отката переустановите расширение Cline и запустите установщик заново' 'Yellow'
+                }
                 continue
             }
             if (-not (Test-Path -LiteralPath $t.Backup)) {

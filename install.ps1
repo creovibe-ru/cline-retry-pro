@@ -55,9 +55,18 @@ function Get-ScriptsDir {
 
     foreach ($name in $ScriptNames) {
         $dst = Join-Path $dir $name
-        if (Test-Path -LiteralPath $dst) { continue }
         Write-Step ('  загрузка ' + $name + '...') 'DarkGray'
-        Invoke-WebRequest -UseBasicParsing -Uri ($Raw + '/' + $name) -OutFile $dst
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri ($Raw + '/' + $name) -OutFile $dst
+        }
+        catch {
+            if (Test-Path -LiteralPath $dst) {
+                Write-Step '  обновить не удалось, использую сохранённую копию' 'Yellow'
+            }
+            else {
+                throw ('Не удалось скачать ' + $name + ': ' + $_.Exception.Message)
+            }
+        }
     }
 
     return $dir
